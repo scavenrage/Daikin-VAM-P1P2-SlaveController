@@ -99,8 +99,22 @@ own response), is the ground truth for the current state:
 ## Other F0 packets
 
 - `00F033` → `40F033`: payload `00 00 00 [filterHi] [filterLo]` — echoes the
-  filter/maintenance counter sent by the master (`0F0D` typical)
+  filter/maintenance counter sent by the master (`0F0D` typical, likely
+  running hours)
 - `00F034` → `40F034`: empty response (header + CRC only)
+
+## Filter cleaning warning — `80 00 18` / `40 00 41`
+
+Separate from the running filter counter above, this pair of packets carries
+the **dirty-filter warning flag** (the icon that appears on the wall panel):
+
+| Packet | Byte | Values |
+|---|---|---|
+| `800018` / `400041` | 4 (payload) | `00` = no warning / reset, `02` = warning active |
+
+`01` has never been observed and is presumed to be an intermediate/transient
+state. Confirmed by toggling the panel's filter-reset function and observing
+this byte flip from `02` to `00` in both packets simultaneously.
 
 ## Dead ends (do not retry)
 
