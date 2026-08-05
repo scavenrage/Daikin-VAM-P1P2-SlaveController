@@ -1,0 +1,46 @@
+#
+# Flash size — ESP32-H2-MINI-1-N4 ha 4MB
+#
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+#
+# Partition Table
+#
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+CONFIG_PARTITION_TABLE_MD5=y
+
+#
+# mbedTLS — richiesto dal layer di sicurezza Zigbee
+#
+CONFIG_MBEDTLS_HARDWARE_AES=n
+CONFIG_MBEDTLS_HARDWARE_MPI=n
+CONFIG_MBEDTLS_HARDWARE_SHA=n
+CONFIG_MBEDTLS_CMAC_C=y
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
+CONFIG_MBEDTLS_ECJPAKE_C=y
+
+#
+# Zboss — ZCZR abilita sia Coordinator che Router (ruolo scelto a runtime)
+#
+CONFIG_ZB_ENABLED=y
+CONFIG_ZB_ZCZR=y
+
+#
+# Prestazioni radio e sistema
+# IEEE802154_TIMING_OPTIMIZATION: migliora stabilità radio e throughput
+# FREERTOS_HZ=1000: migliora responsività task (default 100, consigliato 1000 da Espressif per Zigbee)
+#
+CONFIG_IEEE802154_TIMING_OPTIMIZATION=y
+CONFIG_FREERTOS_HZ=1000
+
+#
+# Brownout detector — soglia minima (level 0, ~2.43V), stessa scelta di
+# smart_switch per evitare false attivazioni da transienti sull'alimentazione.
+#
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_0=y
+CONFIG_ESP_BROWNOUT_DET_LVL=0
