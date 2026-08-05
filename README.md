@@ -6,8 +6,9 @@ coordinator) via a dual-MCU board: an ATmega328 registered as a genuine
 BRC301B61-compatible **slave controller** on the P1/P2 bus, bridged over a
 serial link to an ESP32-H2 running native Zigbee.
 
-> **Status: prototype.** Bring-up and bench-tested; not yet deployed
-> long-term behind the wall panel. See [Known limitations](#known-limitations).
+> **Status: deployed.** Installed behind the wall panel and in daily use
+> since early August 2026, working reliably so far. Hardware/firmware are
+> still considered early revisions — see [Known limitations](#known-limitations).
 
 Built on top of [Arnold-n/P1P2MQTT](https://github.com/Arnold-n/P1P2MQTT)
 (P1P2MQTT library, CC BY-NC-ND 4.0). VAM units are currently read-only in
@@ -171,8 +172,8 @@ looked plausible but don't work: see [`protocol.md`](protocol.md).
 
 ## Known limitations
 
-- Prototype stage: bench-validated, not yet running long-term in the final
-  wall-mounted installation
+- Deployed and running behind the wall panel, but still a short track
+  record — not yet validated over months/seasons of operation
 - `ESP_ZB_PRIMARY_CHANNEL_MASK` is hard-coded and must be edited per network
   before flashing
 - No bridging to MQTT directly — this targets Zigbee (ZHA/Zigbee2MQTT)
