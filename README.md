@@ -53,6 +53,13 @@ ATmega+ESP32 board was added and tested against it once the bus protocol
 was confirmed working. A single, smaller, more integrated board combining
 both is possible and could be a future revision if there's interest.
 
+Why two MCUs instead of running everything on the ESP32-H2? The P1/P2 bus
+timing (response delays, silence-after-registration behavior, etc.) is what
+was validated and got working reliably on the ATmega — that timing-sensitive
+part has not been tried on the ESP32. Bridging a second MCU purely for
+Zigbee was the path of least resistance, not a claim that single-chip
+isn't possible.
+
 ## Repository layout
 
 | Path | Contents |
