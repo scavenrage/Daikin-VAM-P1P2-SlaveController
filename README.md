@@ -1,10 +1,15 @@
 # Daikin VAM — P1P2 Slave Controller with Zigbee bridge
 
 Full read **and write** control of a Daikin VAM heat-recovery ventilation
-unit over the P1/P2 bus, exposed to Home Assistant (or any Zigbee
-coordinator) via a dual-MCU board: an ATmega328 registered as a genuine
-BRC301B61-compatible **slave controller** on the P1/P2 bus, bridged over a
-serial link to an ESP32-H2 running native Zigbee.
+unit over the P1/P2 bus, using an ATmega328 registered as a genuine
+BRC301B61-compatible **slave controller**.
+
+**The ATmega328 (`Atmega328/`) is the core of this project** — the actual
+P1/P2 reverse-engineering result — and is fully usable on its own, e.g. as
+a serial bridge into your own MQTT/Home Assistant setup. **The ESP32-H2
+(`ESP32-H2/`) is a completely optional add-on**: it bridges that same
+ATmega over a serial link to native Zigbee, for anyone who wants a Zigbee
+device instead of rolling their own integration.
 
 > **Status: deployed.** Installed behind the wall panel and in daily use
 > since early August 2026, working reliably so far. Hardware/firmware are
@@ -24,41 +29,58 @@ Daikin VAM unit
  MAX22088 transceiver board  (Hardware/P1P2 Schematic.epro2 + P1P2 PCB.epro2)
       │  DOUT / DIN / RST
       │
-  ATmega328  ──────UART (115200, S,/E,/commands)──────  ESP32-H2
- (P1/P2 slave                                          (Zigbee router,
-  controller,                                            6 On/Off endpoints
-  Atmega328/)                                             + OTA, ESP32-H2/)
-                                                              │
-                                                        Zigbee coordinator
-                                                        (Home Assistant / ZHA)
+  ATmega328                            ┊  optional, ESP32-H2/
+ (P1/P2 slave controller,              ┊
+  Atmega328/ — this is the core        ┊──UART (115200, S,/E,/commands)──  ESP32-H2
+  of the project, usable standalone    ┊                                 (Zigbee router,
+  e.g. over its own serial link)       ┊                                   6 On/Off endpoints
+                                        ┊                                   + OTA)
+                                        ┊                                       │
+                                        ┊                                 Zigbee coordinator
+                                        ┊                                 (Home Assistant / ZHA)
 ```
 
 Both MCUs live on one custom board (`Hardware/Atmega+ESP32 Schematic.epro2` +
 `Atmega+ESP32 PCB.epro2`), connected to a separate small board carrying the
-MAX22088 P1/P2 transceiver via a 7-pin header.
+MAX22088 P1/P2 transceiver via a 7-pin header — but the ESP32-H2 half of
+that board (and everything to its right in the diagram above) is optional:
+the ATmega alone, wired directly to the MAX22088 board, is a complete,
+working P1/P2 slave controller on its own.
+
+The PCB is split in two mainly because of how this was validated: the P1/P2
+transceiver board was built and tested on its own first, then the
+ATmega+ESP32 board was added and tested against it once the bus protocol
+was confirmed working. A single, smaller, more integrated board combining
+both is possible and could be a future revision if there's interest.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `Atmega328/` | Arduino sketch for the ATmega328 — P1/P2 bus slave-controller logic |
-| `ESP32-H2/` | ESP-IDF project for the ESP32-H2 — Zigbee bridge to the ATmega |
+| `Atmega328/` | **Core.** Arduino sketch for the ATmega328 — P1/P2 bus slave-controller logic |
+| `ESP32-H2/` | *Optional.* ESP-IDF project for the ESP32-H2 — Zigbee bridge to the ATmega |
 | `Hardware/` | EasyEDA Pro schematics/PCB for both boards (main board + P1/P2 transceiver board) |
 | `protocol.md` | Full P1/P2 protocol reverse-engineering write-up (packet captures, byte-level mapping) |
 
 ## What this does
 
+**Core (ATmega328, `Atmega328/`):**
 - Registers on the P1/P2 bus as a real slave controller (not a generic aux
   responder) alongside the existing wall panel (master)
 - Reads the unit's real-time state directly from the bus — no manual sync needed
 - Commands on/off, fan speed (Low/High), mode (Auto/Heat-exchange/Bypass),
   and fresh-up — each verified with closed-loop confirmation from the bus
-- Bridges state and commands to the ESP32-H2 over a compact serial protocol
+- Exposes that state and those commands over a simple serial line, ready to
+  be picked up by whatever you want on the other end (the optional ESP32-H2
+  bridge below, an MQTT gateway, a Raspberry Pi, ...)
+
+**Optional (ESP32-H2, `ESP32-H2/`):**
+- Bridges the ATmega's serial state/commands to native Zigbee
 - Exposes 6 Zigbee On/Off endpoints to Home Assistant, reflecting the
   **real, bus-confirmed state** — never an optimistic guess at what a
   command is expected to do
-- Zigbee OTA client on the ESP32-H2 side, so the bridge can be updated
-  in place once it's installed behind the wall panel
+- Zigbee OTA client, so the bridge can be updated in place once it's
+  installed behind the wall panel
 
 ## Hardware
 
@@ -90,7 +112,7 @@ controller should be on the bus at the same time.
   boot and drives itself entirely from the ATmega↔ESP32 link below — there
   is no interactive serial console in normal operation
 
-## Building — ESP32-H2 (Zigbee bridge)
+## Building — ESP32-H2 (Zigbee bridge, optional)
 
 Requires ESP-IDF v5.1+ with the `esp32h2` target.
 
@@ -113,7 +135,7 @@ this needs an internet connection once.
   different (non-OTA) partition table, do a full `idf.py erase-flash`
   first, otherwise the old table in flash won't match the new one
 
-## Zigbee endpoints (Home Assistant / ZHA)
+## Zigbee endpoints (Home Assistant / ZHA, optional ESP32-H2 bridge)
 
 | EP | Cluster | Function |
 |---|---|---|
@@ -132,18 +154,20 @@ flip back to `ON` once the next real-state update arrives — the firmware
 never assumes a command succeeded, it only reports what the ATmega actually
 confirms.
 
-## ATmega ↔ ESP32-H2 serial protocol
+## ATmega serial protocol
 
-115200 8N1, line-based, on the dedicated UART link described above.
+This is the ATmega's own serial API — 115200 8N1, line-based. The optional
+ESP32-H2 bridge is just one consumer of it; anything that can talk serial
+(a Raspberry Pi, an MQTT gateway, ...) can drive the unit the same way.
 
-**ESP32 → ATmega** (commands): `ON` `OFF` `VL` `VH` `MA` `MS` `MB` `FU1` `FU0` `GET`
-(`GET` asks for an immediate state resync, used by the ESP32 after a reboot).
+**Host → ATmega** (commands): `ON` `OFF` `VL` `VH` `MA` `MS` `MB` `FU1` `FU0` `GET`
+(`GET` asks for an immediate state resync, e.g. after the host reboots).
 
-**ATmega → ESP32:**
+**ATmega → host:**
 ```
 S,<onoff>,<mode>,<speed>,<freshup>,<registered>
 ```
-Sent automatically on every real change (commanded from Zigbee, changed on
+Sent automatically on every real change (commanded from the host, changed on
 the physical wall panel, or a change in bus registration), or immediately
 in response to `GET`.
 
