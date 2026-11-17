@@ -17,7 +17,8 @@
 
 static const char *TAG = "OTA";
 
-static esp_ota_handle_t      s_ota_handle        = 0;
+#if ZB_OTA_ENABLED   /* esp-zigbee-lib 2.x: OTA Zigbee non supportato, vedi ota.h */
+static esp_ota_handle_t     s_ota_handle        = 0;
 static const esp_partition_t *s_ota_part         = NULL;
 static bool                   s_skip_subelement  = false;
 
@@ -165,6 +166,7 @@ esp_err_t ota_upgrade_handler(const esp_zb_zcl_ota_upgrade_value_message_t *mess
 
     return ret;
 }
+#endif /* ZB_OTA_ENABLED */
 
 void ota_mark_valid(void)
 {

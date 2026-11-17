@@ -25,16 +25,26 @@ typedef struct {
 
 typedef void (*uart_link_state_cb_t)(const vmc_state_t *state);
 typedef void (*uart_link_error_cb_t)(uint8_t code);
+/* ok = l'ATmega ha risposto a GET entro LINK_REPLY_TIMEOUT_MS. Chiamata al cambio (e dopo
+ * il primo controllo) e a ogni controllo fallito, dal task di controllo del collegamento. */
+typedef void (*uart_link_alive_cb_t)(bool ok);
 
 /*
- * Inizializza la UART e avvia il task di ricezione. Le callback vengono
- * chiamate dal task UART: non toccare mai lo stack Zigbee direttamente da
- * lì, solo tramite esp_zb_scheduler_alarm (vedi main.c).
+ * Inizializza la UART e avvia il task di ricezione e quello di controllo del
+ * collegamento. Le callback vengono chiamate da quei task, non dal task
+ * Zigbee: verso lo stack passare da zb_alarm_any_task (vedi main.c).
+ *
+ * Controllo del collegamento: l'ATmega manda lo stato solo ai cambiamenti o su
+ * GET, quindi il silenzio da solo non dice niente. Ogni LINK_CHECK_PERIOD_MS, e
+ * LINK_AFTER_CMD_MS dopo ogni comando, si manda GET e si aspetta una riga
+ * qualsiasi entro LINK_REPLY_TIMEOUT_MS.
  */
-void uart_link_init(uart_link_state_cb_t state_cb, uart_link_error_cb_t error_cb);
+void uart_link_init(uart_link_state_cb_t state_cb, uart_link_error_cb_t error_cb,
+                    uart_link_alive_cb_t alive_cb);
 
 /*
  * Invia un comando all'ATmega. Chiamabile direttamente dal task Zigbee:
- * è solo una scrittura sulla UART, non tocca lo stack.
+ * è solo una scrittura sulla UART, non tocca lo stack. Per i comandi diversi
+ * da GET programma anche un controllo (GET) poco dopo.
  */
 void uart_link_send_cmd(const char *cmd);

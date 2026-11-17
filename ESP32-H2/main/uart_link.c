@@ -6,6 +6,7 @@
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdlib.h>
@@ -20,8 +21,22 @@ static const char *TAG = "UART_LINK";
 #define UART_RX_BUF_SIZE 256
 #define LINE_MAX        32
 
+#define LINK_CHECK_PERIOD_MS   60000   /* GET periodico */
+#define LINK_AFTER_CMD_MS      1500    /* GET dopo un comando (risposta del bus) */
+#define LINK_REPLY_TIMEOUT_MS  2000    /* attesa di una riga dopo GET */
+
 static uart_link_state_cb_t s_state_cb = NULL;
 static uart_link_error_cb_t s_error_cb = NULL;
+static uart_link_alive_cb_t s_alive_cb = NULL;
+static SemaphoreHandle_t    s_rx_line  = NULL;   /* data dal task RX a ogni riga completa */
+static TaskHandle_t         s_mon_task = NULL;   /* task di controllo del collegamento */
+
+static void uart_write_line(const char *cmd)
+{
+    char buf[LINE_MAX];
+    int len = snprintf(buf, sizeof(buf), "%s\n", cmd);
+    if (len > 0) uart_write_bytes(UART_PORT, buf, (size_t)len);
+}
 
 /* line è già senza il prefisso "S,": "<onoff>,<mode>,<speed>,<freshup>,<registered>" */
 static bool parse_state_line(char *line, vmc_state_t *out)
@@ -76,6 +91,7 @@ static void uart_rx_task(void *pv)
             lineBuf[idx] = '\0';
             if (idx > 0 && lineBuf[idx - 1] == '\r') lineBuf[idx - 1] = '\0';
             handle_line(lineBuf);
+            if (lineBuf[0] != '\0') xSemaphoreGive(s_rx_line);   /* l'ATmega è vivo */
             idx = 0;
         } else if (idx < LINE_MAX - 1) {
             lineBuf[idx++] = (char)byte;
@@ -84,10 +100,48 @@ static void uart_rx_task(void *pv)
     }
 }
 
-void uart_link_init(uart_link_state_cb_t state_cb, uart_link_error_cb_t error_cb)
+/* Controllo del collegamento: GET periodico (o poco dopo un comando) e attesa di
+ * una riga qualsiasi. Log e callback solo al cambio di stato. */
+static void link_monitor_task(void *pv)
+{
+    int known = -1;   /* -1 = mai controllato, 0 = non risponde, 1 = ok */
+    TickType_t wait = 0;   /* primo controllo subito */
+
+    for (;;) {
+        /* Un comando inviato (notifica) anticipa il controllo. */
+        if (ulTaskNotifyTake(pdTRUE, wait) > 0) {
+            vTaskDelay(pdMS_TO_TICKS(LINK_AFTER_CMD_MS));
+            ulTaskNotifyTake(pdTRUE, 0);   /* comandi a raffica: un solo GET */
+        }
+
+        xSemaphoreTake(s_rx_line, 0);      /* scarta righe arrivate prima del GET */
+        uart_write_line("GET");
+        bool ok = xSemaphoreTake(s_rx_line, pdMS_TO_TICKS(LINK_REPLY_TIMEOUT_MS)) == pdTRUE;
+
+        bool changed = ((int)ok != known);
+        if (changed) {
+            if (ok) {
+                ESP_LOGI(TAG, "ATmega raggiungibile");
+            } else {
+                ESP_LOGW(TAG, "ATmega non risponde (nessuna riga entro %d ms da GET)",
+                         LINK_REPLY_TIMEOUT_MS);
+            }
+            known = ok;
+        }
+        /* Log solo al cambio; la callback anche a ogni controllo fallito: un comando
+         * arrivato mentre l'ATmega non risponde va annullato anche in HA (main.c). */
+        if (s_alive_cb && (changed || !ok)) s_alive_cb(ok);
+        wait = pdMS_TO_TICKS(LINK_CHECK_PERIOD_MS);
+    }
+}
+
+void uart_link_init(uart_link_state_cb_t state_cb, uart_link_error_cb_t error_cb,
+                    uart_link_alive_cb_t alive_cb)
 {
     s_state_cb = state_cb;
     s_error_cb = error_cb;
+    s_alive_cb = alive_cb;
+    s_rx_line  = xSemaphoreCreateBinary();
 
     uart_config_t cfg = {
         .baud_rate  = UART_BAUD,
@@ -104,14 +158,14 @@ void uart_link_init(uart_link_state_cb_t state_cb, uart_link_error_cb_t error_cb
 
     xTaskCreate(uart_rx_task, "uart_link_rx", 3072, NULL, 5, NULL);
 
-    /* Riallineamento immediato: chiede lo stato corrente invece di aspettare
-     * il prossimo cambiamento sul bus. */
-    uart_link_send_cmd("GET");
+    /* Il primo controllo manda subito GET: riallinea lo stato corrente invece di
+     * aspettare il prossimo cambiamento sul bus (prima era un GET qui). */
+    xTaskCreate(link_monitor_task, "uart_link_mon", 2560, NULL, 4, &s_mon_task);
 }
 
 void uart_link_send_cmd(const char *cmd)
 {
-    char buf[LINE_MAX];
-    int len = snprintf(buf, sizeof(buf), "%s\n", cmd);
-    if (len > 0) uart_write_bytes(UART_PORT, buf, (size_t)len);
+    uart_write_line(cmd);
+    if (s_mon_task && strcmp(cmd, "GET") != 0)
+        xTaskNotifyGive(s_mon_task);   /* controllo con GET poco dopo il comando */
 }

@@ -34,7 +34,7 @@ Daikin VAM unit
   Atmega328/ — this is the core        ┊──UART (115200, S,/E,/commands)──  ESP32-H2
   of the project, usable standalone    ┊                                 (Zigbee router,
   e.g. over its own serial link)       ┊                                   6 On/Off endpoints
-                                        ┊                                   + OTA)
+                                        ┊                                   + maintenance)
                                         ┊                                       │
                                         ┊                                 Zigbee coordinator
                                         ┊                                 (Home Assistant / ZHA)
@@ -85,9 +85,15 @@ isn't possible.
 - Bridges the ATmega's serial state/commands to native Zigbee
 - Exposes 6 Zigbee On/Off endpoints to Home Assistant, reflecting the
   **real, bus-confirmed state** — never an optimistic guess at what a
-  command is expected to do
-- Zigbee OTA client, so the bridge can be updated in place once it's
-  installed behind the wall panel
+  command is expected to do: a command the VAM does not confirm is rolled
+  back in Home Assistant
+- Reports the state of the ESP32 ↔ ATmega ↔ P1/P2 link to Home Assistant
+  (ATmega reachable, registered on the bus, last error)
+- Maintenance switches: firmware update over Bluetooth, serial download
+  mode, Zigbee factory reset, live log over Bluetooth — so the bridge can be
+  maintained once it's installed behind the wall panel (see
+  [Maintenance switches](#maintenance-switches))
+- Built on `esp-zigbee-lib` 2.x (Espressif's own Zigbee stack, no ZBOSS)
 
 ## Hardware
 
@@ -99,7 +105,8 @@ isn't possible.
 - ATmega ↔ ESP32-H2 serial link: ATmega `D0`/`D1` ↔ ESP32-H2 `IO5`/`IO4`
   (resistor divider on the ATmega→ESP32 direction, 5V logic down to 3.3V)
 - ESP32-H2: `GPIO9` = factory-reset button (hold 5s to leave the Zigbee
-  network), `GPIO22` = status LED
+  network; a short press, 0.3–5 s, turns the Bluetooth log off),
+  `GPIO22` = status LED
 - Bus: 9600 baud · Daikin/HBS CRC polynomial `0xD9`, feed `0x00`
 - Power: the ESP32-H2 side is powered from an external 5V/12V supply; the
   ATmega side is designed to be powered from the P1/P2 bus wiring itself in
@@ -121,7 +128,7 @@ controller should be on the bus at the same time.
 
 ## Building — ESP32-H2 (Zigbee bridge, optional)
 
-Requires ESP-IDF v5.1+ with the `esp32h2` target.
+Tested with ESP-IDF **v5.5.6** and the `esp32h2` target.
 
 ```bash
 cd ESP32-H2
@@ -130,9 +137,10 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
-The first build downloads `espressif/esp-zigbee-lib` and
-`espressif/esp-zboss-lib` automatically (see `main/idf_component.yml`);
-this needs an internet connection once.
+The first build downloads `espressif/esp-zigbee-lib` 2.x automatically
+(see `main/idf_component.yml`); this needs an internet connection once.
+The firmware uses the library's 1.x compatibility layer
+(`CONFIG_ZB_SDK_1xx` in `sdkconfig.defaults`).
 
 **Before flashing for the first time, check:**
 - `ESP_ZB_PRIMARY_CHANNEL_MASK` in `main/main.c` is hard-coded to Zigbee
@@ -142,16 +150,32 @@ this needs an internet connection once.
   different (non-OTA) partition table, do a full `idf.py erase-flash`
   first, otherwise the old table in flash won't match the new one
 
+**Updating a bridge that runs the older firmware (`esp-zigbee-lib` 1.x):**
+- The 1.x firmware has no Bluetooth and its Zigbee OTA cannot be used
+  (the 2.x compatibility layer does not support the OTA cluster), so the
+  first update is done **by cable**. After that, updates go over Bluetooth.
+- At the first start the firmware migrates the Zigbee network data from
+  the old format (`esp_zigbee_nvram_migrate`), so the bridge rejoins the
+  network by itself.
+- The new endpoints (10–13) and the link cluster are only discovered at
+  pairing time: remove the device in ZHA and add it again.
+- When switching ESP-IDF version, delete `build/` and `sdkconfig` before
+  building.
+
 ## Zigbee endpoints (Home Assistant / ZHA, optional ESP32-H2 bridge)
 
 | EP | Cluster | Function |
 |---|---|---|
-| 1 | On/Off + OTA client | Power (on/off) |
+| 1 | On/Off + link cluster `0xFF12` | Power (on/off) + link state |
 | 2 | On/Off | Fan speed — Off = Low, On = High |
 | 3 | On/Off | Fresh-up |
 | 4 | On/Off | Mode: Auto |
 | 5 | On/Off | Mode: Heat-exchange |
 | 6 | On/Off | Mode: Bypass |
+| 10 | On/Off | BLE (maintenance) |
+| 11 | On/Off | PROG (maintenance) |
+| 12 | On/Off | RESCRED (maintenance) |
+| 13 | On/Off | LOG (maintenance) |
 
 Endpoints 4–6 are mutually exclusive: only one is ever `ON`, reflecting
 whichever mode is actually active on the bus. Switching one on sends the
@@ -160,6 +184,82 @@ another on has no direct equivalent on the unit, so the switch will simply
 flip back to `ON` once the next real-state update arrives — the firmware
 never assumes a command succeeded, it only reports what the ATmega actually
 confirms.
+
+### ATmega link
+
+The ATmega only sends its state when something changes or when asked with
+`GET`, so silence alone means nothing. The ESP32-H2 sends `GET` every 60 s
+and 1.5 s after every command, and expects a reply within 2 s. The result
+is logged on change (`ATmega non risponde` / `ATmega raggiungibile`) and
+exposed in the private cluster `0xFF12` on EP1:
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `0x0000` | bool | ATmega reachable (replies to `GET`) |
+| `0x0001` | bool | ATmega registered as slave on the P1/P2 bus |
+| `0x0002` | uint8 | Last `E,<code>` from the ATmega (0 = none; reset by the next valid state line) |
+
+The bridge reports these attributes itself on every change and on every
+keepalive with the coordinator (every 5 min); no reporting configuration
+is needed in ZHA. While the ATmega does not reply, the six On/Off
+endpoints are rewritten with the last real state (all off if none was ever
+received), so Home Assistant never shows a command that did not happen.
+
+### ZHA quirk
+
+`ha/daikin_vam_quirk.py` names the endpoints (Accensione, Velocità alta,
+Fresh-up, Modo Auto/Scambio/Bypass, BLE, PROG, RESCRED, LOG) and adds the
+diagnostic entities "Collegamento ATmega", "Registrato bus P1P2" and
+"Errore ATmega" from the link cluster. PROG, RESCRED and LOG are disabled
+by default. Copy it into your custom quirks folder
+(`zha: custom_quirks_path:` in `configuration.yaml`) and restart Home
+Assistant. Without the quirk the switches work the same with generic names,
+and the link state is not shown.
+
+## Maintenance switches
+
+Four virtual switches let you maintain the bridge from Home Assistant,
+without removing the wall panel. Each action starts 1.5 s after the
+command, so that the Zigbee reply is sent first.
+
+| Switch | EP | What it does |
+|---|---|---|
+| **BLE** | 10 | Restarts in **Bluetooth update mode**: Zigbee and the ATmega link are not started, only Bluetooth LE for 10 minutes, then the bridge restarts normally. Use it with `tools/ble_update.html`. |
+| **PROG** | 11 | Restarts in **serial download mode** (ROM bootloader), ready for `esptool`. |
+| **RESCRED** | 12 | **Zigbee factory reset**: erases the Zigbee credentials and restarts; the bridge must be paired again. Same as holding `GPIO9` for 5 s. |
+| **LOG** | 13 | **Log over Bluetooth**: ON starts Bluetooth LE next to Zigbee and sends the firmware log to `tools/ble_log.html`; it stays on after restarts until it is switched OFF (or `GPIO9` is pressed briefly, 0.3–5 s). Switching it on or off restarts the bridge. |
+
+After joining, the bridge reports the real state of these switches to Home
+Assistant, so they do not stay ON in the UI. On the UART0 console you can
+also type `prog` (download mode), `reset` (restart) or `help`.
+
+### Bluetooth web pages
+
+The pages in `tools/` (`ble_update.html` and `ble_log.html`) use
+**Web Bluetooth**: open them in **Chrome or Edge** (desktop or Android),
+directly from disk or from any web server. Firefox, Safari and Brave do
+not support Web Bluetooth.
+
+**Firmware update — `tools/ble_update.html`**
+
+1. Turn on the **BLE** switch in Home Assistant. The LED starts blinking
+   slowly; you have 10 minutes.
+2. Choose the application image (`build/vmc_esp32.bin`, the same file
+   flashed at `0x20000`).
+3. Click **Find device and send** and pick `VAM-XXXX` (last 4 digits of
+   the MAC).
+4. At the end the image is verified and the bridge restarts with the new
+   firmware, still paired.
+
+The bridge refuses images of another project (the project name inside the
+image must be `vmc_esp32`) and images larger than the OTA partition
+(1.5 MB).
+
+**Live log — `tools/ble_log.html`**
+
+1. Turn on the **LOG** switch in Home Assistant (the bridge restarts).
+2. Click **Connect device** and pick `VAMLog-XXXX`.
+3. Turn **LOG** off when you are done (or press `GPIO9` briefly).
 
 ## ATmega serial protocol
 
@@ -207,6 +307,9 @@ looked plausible but don't work: see [`protocol.md`](protocol.md).
   record — not yet validated over months/seasons of operation
 - `ESP_ZB_PRIMARY_CHANNEL_MASK` is hard-coded and must be edited per network
   before flashing
+- No Zigbee OTA: `esp-zigbee-lib` 2.x is used through its 1.x compatibility
+  layer, which does not support the OTA cluster (updates over Bluetooth or
+  by cable). Espressif describes that layer as not meant for production
 - No bridging to MQTT directly — this targets Zigbee (ZHA/Zigbee2MQTT)
   coordinators; an MQTT bridge would need to sit on the coordinator side
 

@@ -18,6 +18,13 @@
 #define EP_MODE_SCAMBIO  5   /* On/Off: modalità Scambio */
 #define EP_MODE_BYPASS   6   /* On/Off: modalità Bypass */
 
+/* Endpoint On/Off "virtuali" di manutenzione (come smart switch ZB2): On = azione dopo 1.5 s. */
+#define BLE_SWITCH_EP      10   /* riavvia in modalità aggiornamento BLE */
+#define PROG_SWITCH_EP     11   /* riavvia in modalità programmazione (download seriale) */
+#define FACTORY_SWITCH_EP  12   /* factory reset Zigbee (RESCRED) */
+#define LOG_SWITCH_EP      13   /* log via BLE: On attiva, Off disattiva (riavvio) */
+#define IS_VIRTUAL_EP(ep)  ((ep) >= BLE_SWITCH_EP)
+
 /* ------------------------------------------------------------------ */
 /*  GPIO (da schema: IO9=bottone con pull-up 10k, IO22=LED via R21 1k) */
 /* ------------------------------------------------------------------ */
