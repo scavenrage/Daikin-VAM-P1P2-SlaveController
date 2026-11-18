@@ -13,8 +13,8 @@
 #define OTA_HW_VERSION          0x0001
 #define OTA_MAX_DATA_SIZE       223
 
-#define OTA_FILE_VERSION        0x02000000   /* v2.0.0: esp-zigbee-lib 2.x, senza ZBOSS */
-#define OTA_SW_BUILD_ID         "\x06""v2.0.0"
+#define OTA_FILE_VERSION        0x02000100   /* v2.0.1: ping falliti → riavvio senza cancellare le credenziali */
+#define OTA_SW_BUILD_ID         "\x06""v2.0.1"
 
 /* OTA via Zigbee: disattivato con esp-zigbee-lib 2.x. Nel livello di compatibilità
  * 1.x della 2.0.5 il cluster OTA non è supportato (esp_zb_ota_cluster_create -> NULL,

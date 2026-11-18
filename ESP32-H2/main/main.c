@@ -88,6 +88,8 @@ static bool         s_have_state = false;
 static volatile vmc_state_t s_pending_state;
 
 /* ── Keepalive: costanti (vedi smart_switch/main.c per il razionale) ──── */
+/* Dopo COORDINATOR_PING_MAX_FAILS ping falliti consecutivi (≈ 4-5 min): deep sleep 3 s
+ * e riavvio CON le credenziali (vedi coordinator_ping_result). */
 #define COORDINATOR_PING_TICK_MS       60000
 #define COORDINATOR_PING_TICKS         5
 #define COORDINATOR_PING_MAX_FAILS     6
@@ -793,7 +795,18 @@ static void coordinator_ping_result(esp_zb_zdp_status_t zdo_status,
         led_set_state(LED_ZIGBEE_SEARCHING);
 
         if (s_ping_fail_count >= COORDINATOR_PING_MAX_FAILS) {
-            zigbee_hard_reset("ping fail");
+            /* Coordinator irraggiungibile da ~4-5 min. NON si cancellano le credenziali: il caso
+             * tipico è il coordinator spento (manutenzione di HA, chiavetta guasta) e cancellarle
+             * obbligherebbe a riassociare il dispositivo. Si riavvia passando dal deep sleep di
+             * 3 s (reinizializza il radio come un power cycle) mantenendo le credenziali: al
+             * risveglio lo stack riparte con i dati di rete salvati e rientra quando il
+             * coordinator torna. Se è ancora spento il ciclo si ripete ogni ~5 min.
+             * (Fino alla v2.0.0 qui c'era zigbee_hard_reset(), come nello SmartSwitch.) */
+            ESP_LOGW(TAG, "Coordinator irraggiungibile da %d ping — deep sleep 3s, credenziali conservate",
+                     s_ping_fail_count);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            esp_sleep_enable_timer_wakeup(3ULL * 1000 * 1000);
+            esp_deep_sleep_start();
         }
 
         esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_cb,

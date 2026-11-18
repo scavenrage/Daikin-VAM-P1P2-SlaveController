@@ -94,6 +94,12 @@ isn't possible.
   maintained once it's installed behind the wall panel (see
   [Maintenance switches](#maintenance-switches))
 - Built on `esp-zigbee-lib` 2.x (Espressif's own Zigbee stack, no ZBOSS)
+- Survives a coordinator outage: if the coordinator does not answer the
+  keepalive for ≈ 4–5 minutes the bridge restarts (3 s deep sleep)
+  **keeping its Zigbee credentials**, and rejoins by itself when the
+  coordinator is back — no re-pairing after Home Assistant maintenance
+
+Version history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Hardware
 
