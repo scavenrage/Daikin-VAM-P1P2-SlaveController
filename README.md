@@ -328,8 +328,10 @@ looked plausible but don't work: see [`protocol.md`](protocol.md).
 
 ## License
 
-This repository's code (firmware) is released under the MIT License unless
-noted otherwise. It depends on the P1P2MQTT library
+- Firmware (ATmega sketch, ESP32-H2), Home Assistant quirk and tools: MIT — see [LICENSE](LICENSE).
+- Hardware (`Hardware/`: schematics and PCB of both boards): CERN-OHL-P-2.0 — see [Hardware/LICENSE](Hardware/LICENSE).
+
+The ATmega sketch depends on the P1P2MQTT library
 ([Arnold-n/P1P2MQTT](https://github.com/Arnold-n/P1P2MQTT)), which is
 licensed under CC BY-NC-ND 4.0 — that library is **not** redistributed here
 and must be obtained separately.
